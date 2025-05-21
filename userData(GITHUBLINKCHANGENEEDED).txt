@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Update system packages
+yum update -y
+
+# Install Python, pip, git, MySQL client (mariadb105), and jq for JSON parsing
+yum install -y python3 git jq mariadb105
+yum install -y python3-pip  # Ensure pip3 is present
+
+# Upgrade pip and install Python packages
+pip3 install --upgrade pip
+pip3 install flask
+pip3 install mysql-connector-python
+pip3 install -q -U google-generativeai
+pip3 install boto3 werkzeug
+
+# Clone your app repo (must be public or use CodeCommit if private)
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /home/ec2-user/app
+cd /home/ec2-user/app
+
+# Retrieve RDS credentials from AWS Secrets Manager
+DB_SECRET_NAME="image-captioning-db"
+BUCKET_SECRET_NAME="bucket-config"
+REGION="us-east-1"
+
+export S3_BUCKET=$(aws secretsmanager get-secret-value --secret-id $BUCKET_SECRET_NAME --region $REGION --query SecretString --output text)
+
+aws secretsmanager get-secret-value --secret-id $DB_SECRET_NAME --region $REGION \
+    --query SecretString --output text > db_secret.json
+
+# Extract DB credentials using jq
+export DB_HOST=$(jq -r '.host' db_secret.json)
+export DB_USER=$(jq -r '.username' db_secret.json)
+export DB_PASSWORD=$(jq -r '.password' db_secret.json)
+export DB_NAME=$(jq -r '.name' db_secret.json)
+
+SQL_COMMANDS=$(cat <<EOF
+CREATE DATABASE IF NOT EXISTS $DB_NAME;
+USE $DB_NAME;
+CREATE TABLE IF NOT EXISTS captions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    image_key VARCHAR(255) NOT NULL,
+    caption TEXT NOT NULL,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+EOF
+)
+
+echo "Running DB setup..."
+mysql -h $DB_HOST -u $DB_USER -p$DB_PASSWORD -e "$SQL_COMMANDS"
+
+# Optionally start Flask app (helpful if you're testing with ALB or curl)
+FLASK_APP=app.py flask run --host=0.0.0.0 --port=80 &

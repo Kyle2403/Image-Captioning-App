@@ -1,0 +1,1 @@
+  # add asg,alb depends on RDS, actually,  add later, since after RDS is made, i need to save details to SM manually

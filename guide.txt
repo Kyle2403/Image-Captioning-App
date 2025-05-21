@@ -1,0 +1,6 @@
+deploy the app to S3 -> change  link in userdata.
+GG api in lambda env after uploading the zip files.
+
+upload lambda code to s3 -> update lambda.yaml
+make a key pair for ssh 
+run the network template ->  add db details (default works), ssh key -> run 

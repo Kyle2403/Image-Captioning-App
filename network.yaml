@@ -1,0 +1,679 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for Assignment 2 infrastructure
+
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  Assignment2KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 Key Pair to SSH into instances
+    ConstraintDescription: Must be the name of an existing EC2 Key Pair in this region.
+  DBUsername:
+    Type: String
+    Default: admin
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: compassignment2
+  DBName:
+    Type: String
+    Default: image_caption_db
+  BucketName:
+    Type: String
+    Default: assignment2-bucket
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+  PublicSubnet1ACIDR:
+    Default: 10.0.1.0/24
+  PublicSubnet1BCIDR:
+    Default: 10.0.2.0/24
+  RdsSubnet1ACIDR:
+    Default: 10.0.3.0/24
+  RdsSubnet1BCIDR:
+    Default: 10.0.4.0/24
+  WebAppSubnet1ACIDR:
+    Default: 10.0.5.0/24
+  WebAppSubnet1BCIDR:
+    Default: 10.0.6.0/24
+
+Resources:
+
+  # VPC
+  Assignment2VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: assignment2-vpc
+
+  # Internet Gateway
+  Assignment2IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: assignment2-igw
+
+  Assignment2IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      InternetGatewayId: !Ref Assignment2IGW
+
+  # Public Subnet (us-east-1a)
+  Assignment2PublicSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      CidrBlock: !Ref PublicSubnet1ACIDR
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: assignment2-public-subnet-1a
+
+  Assignment2PublicSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      CidrBlock: !Ref PublicSubnet1BCIDR
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: assignment2-public-subnet-1b
+
+  # Route Table for Public Subnet
+  Assignment2PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      Tags:
+        - Key: Name
+          Value: assignment2-public-rt
+
+  Assignment2PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref Assignment2PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Assignment2IGW
+
+  Assignment2PublicSubnet1ARouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Assignment2PublicSubnet1A
+      RouteTableId: !Ref Assignment2PublicRouteTable
+
+  Assignment2PublicSubnet1BRouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Assignment2PublicSubnet1B
+      RouteTableId: !Ref Assignment2PublicRouteTable
+
+  # NAT Gateway
+  Assignment2EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  Assignment2NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref Assignment2PublicSubnet1B
+      AllocationId: !GetAtt Assignment2EIP.AllocationId
+      Tags:
+        - Key: Name
+          Value: assignment2-nat-gw
+
+  # Private route table that route to nat, associate it with all 4 private subnets
+  Assignment2PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      Tags:
+        - Key: Name
+          Value: assignment2-private-rt
+  
+  # Route for private RT to NAT Gateway
+  Assignment2PrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: Assignment2NATGateway
+    Properties:
+      RouteTableId: !Ref Assignment2PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref Assignment2NATGateway
+
+  # Private Subnet for RDS (us-east-1a)
+  Assignment2PrivateRDSSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      CidrBlock: !Ref RdsSubnet1ACIDR 
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: assignment2-rds-subnet-1a
+
+  # Private Subnet for Web App (us-east-1a)
+  Assignment2PrivateWebAppSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      CidrBlock: !Ref WebAppSubnet1ACIDR
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: assignment2-webapp-subnet-1a
+
+  # Private Subnet for RDS (us-east-1b)
+  Assignment2PrivateRDSSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      CidrBlock: !Ref RdsSubnet1BCIDR
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: assignment2-rds-subnet-1b
+
+  # Private Subnet for Web App (us-east-1b)
+  Assignment2PrivateWebAppSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Assignment2VPC
+      CidrBlock: !Ref WebAppSubnet1BCIDR
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: assignment2-webapp-subnet-1b
+
+  # Associate private RT with RDS subnet 1a
+  Assignment2PrivateRDSSubnet1AAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Assignment2PrivateRDSSubnet1A
+      RouteTableId: !Ref Assignment2PrivateRouteTable
+
+  # Associate private RT with Web App subnet 1a
+  Assignment2PrivateWebAppSubnet1AAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Assignment2PrivateWebAppSubnet1A
+      RouteTableId: !Ref Assignment2PrivateRouteTable
+
+  # Associate private RT with RDS subnet 1b
+  Assignment2PrivateRDSSubnet1BAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Assignment2PrivateRDSSubnet1B
+      RouteTableId: !Ref Assignment2PrivateRouteTable
+
+  # Associate private RT with Web App subnet 1b
+  Assignment2PrivateWebAppSubnet1BAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Assignment2PrivateWebAppSubnet1B
+      RouteTableId: !Ref Assignment2PrivateRouteTable
+
+  # RDS Subnet Group
+  Assignment2RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Assignment 2 RDS Subnet Group
+      SubnetIds:
+        - !Ref Assignment2PrivateRDSSubnet1A
+        - !Ref Assignment2PrivateRDSSubnet1B
+      DBSubnetGroupName: assignment2-rds-subnet-group
+
+  # Bastion Host Security Group
+  Assignment2BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Bastion Host - SSH from My IP
+      VpcId: !Ref Assignment2VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 104.28.209.168/32 
+      Tags:
+        - Key: Name
+          Value: assignment2-bastion-sg
+
+  # Bastion Host EC2 Instance
+  Assignment2BastionHostEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref Assignment2KeyPair
+      SubnetId: !Ref Assignment2PublicSubnet1A
+      SecurityGroupIds:
+        - !Ref Assignment2BastionSecurityGroup
+      Tags:
+        - Key: Name
+          Value: assignment2-bastion-host-ec2
+
+  # ALB Security Group (example, adjust rules as needed)
+  Assignment2ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP inbound traffic
+      VpcId: !Ref Assignment2VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # ASG Instance (webapp instance) Security Group
+  Assignment2AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for App EC2 - SSH from Bastion only, HTTP from ALB
+      VpcId: !Ref Assignment2VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref Assignment2BastionSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref Assignment2ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: assignment2-app-sg
+
+  # Annotation Lambda Security Group
+  Assignment2AnnotationLambdaFunctionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for annotationLambda function
+      VpcId: !Ref Assignment2VPC
+      Tags:
+        - Key: Name
+          Value: assignment2-annotation-lambda-sg
+
+  # RDS Security Group
+  Assignment2RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL access from app instances
+      VpcId: !Ref Assignment2VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref Assignment2AppSecurityGroup  
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref Assignment2AnnotationLambdaFunctionSG  # Added Lambda access
+      Tags:
+        - Key: Name
+          Value: assignment2-rds-sg
+
+  # RDS Instance
+  Assignment2RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: assignment2-rds
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      MultiAZ: true
+      AllocatedStorage: 20
+      DBSubnetGroupName: !Ref Assignment2RDSSubnetGroup
+      VPCSecurityGroups: !Ref Assignment2RDSSecurityGroup
+      PubliclyAccessible: false
+  
+  # RDS Secret
+  Assignment2DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    DependsOn: Assignment2RDSInstance
+    Properties:
+      Name: image-captioning-db
+      Description: Secret for assignment2 RDS credentials and connection info
+      SecretString: !Sub
+        - |
+          {
+            "host": "${RDSHost}",
+            "username": "${DBUsername}",
+            "password": "${DBPassword}",
+            "name": "${DBName}"
+          }
+        - RDSHost: !GetAtt Assignment2RDSInstance.Endpoint.Address
+      Tags:
+        - Key: Name
+          Value: assignment2-db-secret
+
+  # S3 Bucket
+  Assignment2Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+
+   # Secrets Manager Secret for bucket name
+  BucketConfigSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: bucket-config
+      Description: S3 bucket name for the app
+      SecretString: !Ref BucketName
+    
+  # IAM Role for ASG instance
+  Assignment2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: assignment2-instance-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+
+  # Instance Profile for ASG EC2 instances
+  Assignment2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref Assignment2InstanceRole
+      InstanceProfileName: assignment2-instance-profile
+
+  
+  # Launch template for ASG
+  Assignment2LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: assignment2-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref Assignment2KeyPair
+        IamInstanceProfile:
+          Name: !Ref Assignment2InstanceProfile
+        SecurityGroupIds:
+          - !Ref Assignment2AppSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: assignment2-asg-instance
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+
+            yum update -y
+            yum install -y python3 git jq mariadb105
+            yum install -y python3-pip
+
+            pip3 install --upgrade pip
+            pip3 install flask
+            pip3 install mysql-connector-python
+            pip3 install -q -U google-generativeai
+            pip3 install boto3 werkzeug
+
+            git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /home/ec2-user/app
+            cd /home/ec2-user/app
+
+            DB_SECRET_NAME="image-captioning-db"
+            BUCKET_SECRET_NAME="bucket-config"
+            REGION="us-east-1"
+
+            export S3_BUCKET=$(aws secretsmanager get-secret-value --secret-id $BUCKET_SECRET_NAME --region $REGION --query SecretString --output text)
+
+            aws secretsmanager get-secret-value --secret-id $DB_SECRET_NAME --region $REGION \
+                --query SecretString --output text > db_secret.json
+
+            export DB_HOST=$(jq -r '.host' db_secret.json)
+            export DB_USER=$(jq -r '.username' db_secret.json)
+            export DB_PASSWORD=$(jq -r '.password' db_secret.json)
+            export DB_NAME=$(jq -r '.name' db_secret.json)
+
+            SQL_COMMANDS=$(cat <<EOF
+            CREATE DATABASE IF NOT EXISTS $DB_NAME;
+            USE $DB_NAME;
+            CREATE TABLE IF NOT EXISTS captions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                image_key VARCHAR(255) NOT NULL,
+                caption TEXT NOT NULL,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            EOF
+            )
+
+            echo "Running DB setup..."
+            mysql -h $DB_HOST -u $DB_USER -p$DB_PASSWORD -e "$SQL_COMMANDS"
+
+            FLASK_APP=app.py flask run --host=0.0.0.0 --port=80 &
+
+  # ASG
+  Assignment2AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - Assignment2RDSInstance
+      - Assignment2DatabaseSecret
+      - BucketConfigSecret
+    Properties:
+      AutoScalingGroupName: assignment2-asg
+      LaunchTemplate:
+        LaunchTemplateId: !Ref Assignment2LaunchTemplate
+        Version: !GetAtt Assignment2LaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 4
+      DesiredCapacity: 1
+      VPCZoneIdentifier:
+        - !Ref Assignment2PrivateWebAppSubnet1A
+        - !Ref Assignment2PrivateWebAppSubnet1B
+      TargetGroupARNs:
+        - !Ref Assignment2TargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: assignment2-asg-instance
+          PropagateAtLaunch: true
+
+  
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Scale out if CPU > 70%"
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref Assignment2AutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref CPUScaleOutPolicy
+
+  CPUScaleOutPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref Assignment2AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: 1
+      Cooldown: 60
+
+  MemoryAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Scale out if memory > 70%"
+      Namespace: CWAgent
+      MetricName: mem_used_percent
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref Assignment2AutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref MemoryScaleOutPolicy
+
+  MemoryScaleOutPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref Assignment2AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: 1
+      Cooldown: 60
+
+  # ALB
+  Assignment2ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: assignment2-alb
+      Subnets:
+        - !Ref Assignment2PublicSubnet1A
+        - !Ref Assignment2PublicSubnet1B
+      SecurityGroups:
+        - !Ref Assignment2ALBSecurityGroup
+      Scheme: internet-facing
+      Type: application
+  
+  # Target Group 
+  Assignment2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: assignment2-tg
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref Assignment2VPC
+      TargetType: instance
+      HealthCheckPath: /health
+      HealthCheckPort: '80'
+      HealthCheckProtocol: HTTP
+      Matcher:
+        HttpCode: 200
+
+  # Listener for ALB
+  Assignment2Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Assignment2ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref Assignment2TargetGroup
+
+  # Lambda Role
+  Assignment2LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: assignment2-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+
+  # Annotation Lambda
+  Assignment2AnnotationLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: annotationLambda
+      Role: !GetAtt Assignment2LambdaRole.Arn
+      Handler: index.handler  # Replace if different
+      Runtime: python3.12       # Replace if different
+      Code:
+        S3Bucket: PLACEHOLDER_FOR_LAMBDA_ZIP_BUCKET
+        S3Key: PLACEHOLDER_FOR_ANNOTATION_ZIP_KEY
+      MemorySize: 128
+      Timeout: 60
+      VpcConfig:
+        SubnetIds:
+          - !Ref Assignment2PrivateRDSSubnet1A  
+        SecurityGroupIds:
+          - !Ref Assignment2AnnotationLambdaFunctionSG
+
+  # Thumbnail Lambda
+  Assignment2ThumbnailLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: thumbnailLambda
+      Role: !GetAtt Assignment2LambdaRole.Arn
+      Handler: index.handler  # Replace if different
+      Runtime: python3.12       # Replace if different
+      Code:
+        S3Bucket: PLACEHOLDER_FOR_LAMBDA_ZIP_BUCKET #use my account for this bucket
+        S3Key: PLACEHOLDER_FOR_THUMBNAIL_ZIP_KEY
+      MemorySize: 128
+      Timeout: 60
+
+  # Allows S3 to trigger Annotation Lambda
+  Assignment2AnnotationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Assignment2AnnotationLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::${Assignment2Bucket}
+
+  # Allows S3 to trigger Thumbnail Lambda
+  Assignment2ThumbnailLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Assignment2ThumbnailLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::${Assignment2Bucket}
+
+  # New uploads to S3 trigger Lambda functions
+  Assignment2BucketNotification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: !Ref Assignment2Bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt Assignment2AnnotationLambdaFunction.Arn
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt Assignment2ThumbnailLambdaFunction.Arn
+    DependsOn:
+      - Assignment2AnnotationLambdaPermission
+      - Assignment2ThumbnailLambdaPermission
+
+Outputs:
+  VPCID:
+    Value: !Ref Assignment2VPC
+    Description: VPC ID
+
+  RDSInstanceID:
+    Value: !Ref Assignment2RDSInstance
+    Description: RDS DB Instance ID
+
+  RDSInstanceDNS:
+    Description: "RDS Instance Endpoint DNS Name"
+    Value: !GetAtt Assignment2RDSInstance.Endpoint.Address
+
+  BucketName:
+    Value: !Ref Assignment2Bucket
+    Description: S3 Bucket for image uploads and thumbnails

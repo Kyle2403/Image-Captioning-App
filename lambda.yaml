@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Template to create Lambda functions and set up S3 trigger from assignment2-bucket
+
+Resources:
+
+  Assignment2LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: assignment2-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+
+  Assignment2AnnotationLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: annotationLambda
+      Role: !GetAtt Assignment2LambdaRole.Arn
+      Handler: index.handler  # Replace if different
+      Runtime: python3.12       # Replace if different
+      Code:
+        S3Bucket: PLACEHOLDER_FOR_LAMBDA_ZIP_BUCKET
+        S3Key: PLACEHOLDER_FOR_ANNOTATION_ZIP_KEY
+      MemorySize: 128
+      Timeout: 60
+      VpcConfig:
+      SubnetIds:
+        - !Ref Assignment2PrivateWebAppSubnet1A  # Replace with a different private subnet if preferred
+      SecurityGroupIds:
+        - !Ref AnnotationLambdaFunctionSG
+
+  Assignment2ThumbnailLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: thumbnailLambda
+      Role: !GetAtt Assignment2LambdaRole.Arn
+      Handler: index.handler  # Replace if different
+      Runtime: python3.12       # Replace if different
+      Code:
+        S3Bucket: PLACEHOLDER_FOR_LAMBDA_ZIP_BUCKET #use my account for this bucket
+        S3Key: PLACEHOLDER_FOR_THUMBNAIL_ZIP_KEY
+      MemorySize: 128
+      Timeout: 60
+
+
+  Assignment2AnnotationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Assignment2AnnotationLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::assignment2-bucket
+
+  Assignment2ThumbnailLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Assignment2ThumbnailLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::assignment2-bucket
+
+  Assignment2BucketNotification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: assignment2-bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt Assignment2AnnotationLambdaFunction.Arn
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt Assignment2ThumbnailLambdaFunction.Arn
+    DependsOn:
+      - Assignment2AnnotationLambdaPermission
+      - Assignment2ThumbnailLambdaPermission
